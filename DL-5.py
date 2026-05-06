@@ -1,0 +1,144 @@
+
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense,\
+	Embedding, Lambda
+from tensorflow.keras.preprocessing.text import Tokenizer
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+import re
+
+# --- Tiny toy corpus (paragraph split into “sentences” by periods) ---
+data = """We are about to study the idea of a computational process.
+Computational processes are abstract beings that inhabit computers.
+As they evolve, processes manipulate other abstract things called data.
+The evolution of a process is directed by a pattern of rules
+called a program. People create programs to direct processes. In effect,
+we conjure the spirits of the computer with our spells."""
+
+sentences = data.split(".")
+print(sentences)
+
+
+#Clean Data
+# --- Normalize text: drop empties, strip punctuation/noise, lowercase ---
+clean_sentences = []
+for sentence in sentences:
+    if sentence == "":
+        continue;
+    sentence = re.sub('[^A-Za-z0-9]+', ' ', sentence)
+    sentence = re.sub(r'(?:^| )\w(?:$| )', ' ', sentence).strip()
+    sentence = sentence.lower()
+    clean_sentences.append(sentence)
+clean_sentences
+
+corpus = clean_sentences
+
+# Convert the corpus to a sequence of integers
+# --- Keras tokenizer: word -> integer id per sentence ---
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts(corpus)
+sequences = tokenizer.texts_to_sequences(corpus)
+print("After converting our words in the corpus \
+into vector of integers:")
+print(sequences)
+
+# creating dictionary for word to index and index to word
+# --- Align token ids with split words (for readable debug / inference) ---
+index_to_word_map = {}
+word_to_index_map = {}
+for index_1, sequence in enumerate(sequences):
+    print(sequence)
+    words_in_sentence = clean_sentences[index_1].split()
+    print(words_in_sentence)
+    for index_2, value in enumerate(sequence):
+        index_to_word_map[value] = words_in_sentence[index_2]
+        word_to_index_map[words_in_sentence[index_2]] = value
+
+print(index_to_word_map)
+print("\n")
+print(word_to_index_map)
+
+# Define the parameters
+# --- CBOW hyperparameters: vocab + embedding dim + symmetric window ---
+vocab_size = len(tokenizer.word_index) + 1
+embedding_size = 10
+window_size = 2
+
+# Generate the context-target pairs
+# --- Sliding window: context = left + right neighbors; target = center ---
+contexts = []
+targets = []
+for sequence in sequences:
+	for i in range(window_size, len(sequence) - window_size):
+		context = sequence[i - window_size:i] + sequence[i + 1:i + window_size + 1]
+		target = sequence[i]
+		contexts.append(context)
+		targets.append(target)
+
+#sample of training data
+# --- Pretty-print first few (context words => center word) ---
+for i in range(5):
+    words = []
+    target = index_to_word_map.get(targets[i])
+    for j in contexts[i]:
+        words.append(index_to_word_map.get(j))
+    print(words, "=>", target)
+
+# Convert the contexts and targets to numpy arrays
+X = np.array(contexts)
+Y = np.array(targets)
+# Define the CBOW model
+# --- Embedding -> average context vectors -> MLP -> softmax over vocabulary ---
+model = Sequential()
+model.add(Embedding(input_dim=vocab_size, output_dim=embedding_size, input_length=2 * window_size))
+model.add(Lambda(lambda x: tf.reduce_mean(x, axis=1)))
+model.add(Dense(256, activation='relu'))
+model.add(Dense(512, activation='relu'))
+model.add(Dense(units=vocab_size, activation='softmax'))
+
+# Compile the model
+model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+# Train the model
+model.fit(X, Y, epochs=150, verbose=1)
+
+# Get the word embeddings
+# --- First weight matrix is the embedding lookup table ---
+embeddings = model.get_weights()[0]
+
+# Perform PCA to reduce the dimensionality of the embeddings
+pca = PCA(n_components=2)
+reduced_embeddings = pca.fit_transform(embeddings)
+# Visualize the embeddings
+# --- 2D scatter of words in PCA space ---
+plt.figure(figsize=(7, 7))
+for i, word in enumerate(tokenizer.word_index.keys()):
+    x, y = reduced_embeddings[i]
+    plt.scatter(x, y)
+    plt.annotate(word, xy=(x, y), xytext=(5, 2),
+                 textcoords='offset points',
+                 ha='right', va='bottom')
+plt.show()
+
+# test model
+# --- Manual phrases: map words -> ids -> predict center-like token ---
+test_sentenses = [
+    "we are to study",
+    "create programs direct processes",
+    "spirits process study program",
+    "idea study people create"
+]
+for test_sentense in test_sentenses:
+    test_words = test_sentense.split(" ")
+    print("Words: ", test_words)
+    x_test = []
+    for i in test_words:
+        x_test.append(word_to_index_map.get(i))
+    x_test = np.array([x_test])
+    print("Indexs: ", x_test)
+    test_predictions = model.predict(x_test)
+    y_pred = np.argmax(test_predictions[0])
+    print("Predictons: ",test_words, " => ", index_to_word_map.get(y_pred))
+    print("\n")
