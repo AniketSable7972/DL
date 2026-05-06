@@ -27,9 +27,10 @@
    b. Generate training data
    c. Train model
    d. Output
+   
 
 
-6. Object detection using Transfer Learning of CNN architectures
+7. Object detection using Transfer Learning of CNN architectures
    a. Load in a pre-trained CNN model trained on a large dataset
    b. Freeze parameters (weights) in model’s lower convolutional layers
    c. Add custom classifier with several layers of trainable parameters to model
